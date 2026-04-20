@@ -4,7 +4,7 @@ import json
 import uuid
 import subprocess
 from django.shortcuts import render
-from django.http import JsonResponse, FileResponse
+from django.http import JsonResponse
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
 from docx import Document
@@ -13,9 +13,11 @@ LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.exe"
 
 def extract_fields_from_docx(filepath):
     """
-    Smarter field extraction. Handles cases where dots are:
-    1. On the same line as the label (e.g., 'Name.......')
-    2. On the line below the label (common in Thai academic forms)
+    Highly robust field extraction. 
+    Handles:
+    - Normal dots (.), Ellipsis (…), Underlines (_)
+    - Labels on same line or line above
+    - Multiple dot groups on one line
     """
     doc = Document(filepath)
     fields = []
@@ -23,21 +25,24 @@ def extract_fields_from_docx(filepath):
     
     paragraphs = [p.text.strip() for p in doc.paragraphs]
     
+    # Regex including Unicode ellipsis \u2026 and dots
+    # Looks for any sequence of 2 or more dot-like characters
+    dot_pattern = r"[…\._]{2,}"
+    
     for i, text in enumerate(paragraphs):
-        # Case 1: Label and dots on the same line
-        if '...' in text:
-            # Look for non-dot text before the dots
-            match = re.search(r"([ก-๙a-zA-Z0-9\s(){}\[\]\-:]+?)\s*\.{3,}", text)
+        if re.search(dot_pattern, text):
+            # Case 1: Text before dots on the same line
+            # Capture labels (supporting Thai, English, Numbers)
+            match = re.search(r"([ก-๙a-zA-Z0-9\s(){}\[\]\-:]+?)\s*" + dot_pattern, text)
             if match:
-                label = match.group(1).strip().strip(':')
-                if label and label not in seen:
+                label = match.group(1).strip().strip(':').strip()
+                if label and label not in seen and len(label) < 100:
                     fields.append(label)
                     seen.add(label)
-            # Case 2: Only dots on this line, label was likely on the line above
+            # Case 2: Dots on a new line, check line above
             elif i > 0:
-                prev_text = paragraphs[i-1].strip().strip(':')
-                # If previous line had no dots and was reasonably short (likely a label)
-                if prev_text and '...' not in prev_text and len(prev_text) < 100:
+                prev_text = paragraphs[i-1].strip().strip(':').strip()
+                if prev_text and not re.search(dot_pattern, prev_text) and len(prev_text) < 100:
                     if prev_text not in seen:
                         fields.append(prev_text)
                         seen.add(prev_text)
@@ -46,31 +51,20 @@ def extract_fields_from_docx(filepath):
 
 def fill_docx(template_path, data, output_path):
     """
-    Fills the document by replacing dots.
-    Optimized for both same-line and next-line patterns.
+    Fills document by replacing dot-like characters with values.
     """
     doc = Document(template_path)
-    
-    # Track which fields we have filled to avoid duplicates if desired, 
-    # but usually one field replaces multiple lines of dots.
+    dot_pattern = r"[…\._]{2,}"
     
     for i, p in enumerate(doc.paragraphs):
         text = p.text
         for label, value in data.items():
-            # If label is in this paragraph or the one above
-            found_in_this = label in text
-            found_in_prev = False
-            if i > 0:
-                found_in_prev = label in doc.paragraphs[i-1].text
-                
-            if found_in_this or found_in_prev:
-                # Replace dots in THIS paragraph
+            # Match if label is in this paragraph or previous
+            if label in text or (i > 0 and label in doc.paragraphs[i-1].text):
                 for run in p.runs:
-                    if '...' in run.text:
-                        # Replace 3 or more dots with the value
-                        # We use count=1 to replace only the first occurrence if multiple, 
-                        # but usually a paragraph has one semantic dot sequence.
-                        run.text = re.sub(r'\.{3,}', value, run.text)
+                    if re.search(dot_pattern, run.text):
+                        # Replace dots/ellipsis/underlines with the user's value
+                        run.text = re.sub(dot_pattern, value, run.text)
     
     doc.save(output_path)
 
@@ -95,7 +89,12 @@ def index(request):
 def upload_file(request):
     if request.method == 'POST' and request.FILES.get('file'):
         file = request.FILES['file']
-        fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads'))
+        # Create media root subdirs if not exist
+        upload_dir = os.path.join(settings.MEDIA_ROOT, 'uploads')
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
+            
+        fs = FileSystemStorage(location=upload_dir)
         filename = fs.save(f"{uuid.uuid4()}_{file.name}", file)
         filepath = fs.path(filename)
         
@@ -133,8 +132,8 @@ def generate(request):
             if pdf_path and os.path.exists(pdf_path):
                 return JsonResponse({
                     'success': True,
-                    'pdf_url': f"/media/output/{os.path.basename(pdf_path)}",
-                    'json_url': f"/media/output/{os.path.basename(output_json_path)}"
+                    'pdf_url': f"{settings.MEDIA_URL}output/{os.path.basename(pdf_path)}",
+                    'json_url': f"{settings.MEDIA_URL}output/{os.path.basename(output_json_path)}"
                 })
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
