@@ -1,0 +1,151 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doc Builder | Django</title>
+    <link rel="stylesheet" href="{% static 'doc_builder/css/style.css' %}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Doc Builder</h1>
+            <p class="subtitle">ระบบสร้างเอกสารอัตโนมัติจากจุดไข่ปลา (Django Version)</p>
+        </header>
+
+        <main class="glass-panel">
+            <section id="upload-section" class="fade-in">
+                <div class="upload-zone" id="drop-zone">
+                    <span class="upload-icon">📄</span>
+                    <h3>วางไฟล์ Word (.docx) ที่นี่</h3>
+                    <p class="text-muted">หรือคลิกเพื่อเลือกไฟล์</p>
+                    <input type="file" id="file-input" accept=".docx" style="display: none;">
+                </div>
+            </section>
+
+            <section id="form-container" class="fade-in" style="display: none;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <h2 style="font-size: 1.5rem;">ตรวจพบฟิลด์ข้อมูล</h2>
+                    <button class="btn" style="background: transparent; color: var(--text-muted);" onclick="resetApp()">
+                        <i class="bi bi-arrow-left"></i> เปลี่ยนไฟล์
+                    </button>
+                </div>
+                <div id="dynamic-form" class="form-grid"></div>
+                <button id="submit-btn" class="btn btn-primary">
+                    <span class="btn-text">สร้างเอกสารและส่งออก PDF</span>
+                    <div class="loader" id="submit-loader"></div>
+                </button>
+            </section>
+
+            <section id="results-container" class="fade-in" style="display: none;">
+                <div style="font-size: 4rem; margin-bottom: 1rem;">✅</div>
+                <h2>ประมวลผลสำเร็จ!</h2>
+                <div class="download-options">
+                    <a id="pdf-download" href="#" class="btn btn-success" download>
+                        <i class="bi bi-file-earmark-pdf"></i> ดาวน์โหลด PDF
+                    </a>
+                    <a id="json-download" href="#" class="btn btn-primary" style="background: #334155;" download>
+                        <i class="bi bi-braces"></i> ดาวน์โหลด JSON
+                    </a>
+                </div>
+                <button class="btn" style="margin-top: 2rem; background: transparent; border: 1px solid var(--card-border);" onclick="resetApp()">
+                    ทำรายการใหม่
+                </button>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        let currentFilename = '';
+        const csrftoken = document.querySelector('[name=csrf-token]').content;
+
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const uploadSection = document.getElementById('upload-section');
+        const formContainer = document.getElementById('form-container');
+        const resultsContainer = document.getElementById('results-container');
+        const dynamicForm = document.getElementById('dynamic-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const submitLoader = document.getElementById('submit-loader');
+
+        dropZone.onclick = () => fileInput.click();
+        fileInput.onchange = (e) => { const file = e.target.files[0]; if (file) handleFileUpload(file); };
+
+        async function handleFileUpload(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            dropZone.innerHTML = '<div class="loader" style="display: block;"></div><p style="margin-top: 1rem;">กำลังวิเคราะห์เอกสาร...</p>';
+
+            try {
+                const response = await fetch('upload/', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': csrftoken },
+                    body: formData
+                });
+                const result = await response.json();
+                if (result.error) throw new Error(result.error);
+                currentFilename = result.filename;
+                renderForm(result.fields);
+            } catch (err) {
+                alert('เกิดข้อผิดพลาด: ' + err.message);
+                resetApp();
+            }
+        }
+
+        function renderForm(fields) {
+            dynamicForm.innerHTML = '';
+            fields.forEach(field => {
+                const group = document.createElement('div');
+                group.className = 'input-group';
+                group.innerHTML = `<label>${field}</label><input type="text" name="${field}" placeholder="ระบุข้อมูล...">`;
+                dynamicForm.appendChild(group);
+            });
+            uploadSection.style.display = 'none';
+            formContainer.style.display = 'block';
+        }
+
+        submitBtn.onclick = async () => {
+            const inputs = dynamicForm.querySelectorAll('input');
+            const data = {};
+            inputs.forEach(i => data[i.name] = i.value || ' ');
+
+            submitBtn.disabled = true;
+            document.querySelector('.btn-text').style.display = 'none';
+            submitLoader.style.display = 'block';
+
+            try {
+                const response = await fetch('generate/', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken 
+                    },
+                    body: JSON.stringify({ filename: currentFilename, formData: data })
+                });
+                const result = await response.json();
+                if (result.error) throw new Error(result.error);
+                document.getElementById('pdf-download').href = result.pdf_url;
+                document.getElementById('json-download').href = result.json_url;
+                formContainer.style.display = 'none';
+                resultsContainer.style.display = 'block';
+            } catch (err) {
+                alert('การส่งออกผิดพลาด: ' + err.message);
+            } finally {
+                submitBtn.disabled = false;
+                document.querySelector('.btn-text').style.display = 'block';
+                submitLoader.style.display = 'none';
+            }
+        };
+
+        function resetApp() {
+            uploadSection.style.display = 'block';
+            formContainer.style.display = 'none';
+            resultsContainer.style.display = 'none';
+            dropZone.innerHTML = '<span class="upload-icon">📄</span><h3>วางไฟล์ Word (.docx) ที่นี่</h3><p class="text-muted">หรือคลิกเพื่อเลือกไฟล์</p>';
+        }
+    </script>
+</body>
+</html>
