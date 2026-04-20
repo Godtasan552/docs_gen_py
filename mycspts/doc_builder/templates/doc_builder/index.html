@@ -9,20 +9,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <style>
-        .manual-add {
-            margin-top: 1rem;
-            display: flex;
-            gap: 0.5rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--card-border);
-        }
-        .field-count {
-            font-size: 0.9rem;
-            color: var(--primary);
-            background: rgba(99, 102, 241, 0.1);
-            padding: 0.2rem 0.8rem;
-            border-radius: 20px;
-        }
+        .manual-add { margin-top: 1rem; display: flex; gap: 0.5rem; padding-top: 1rem; border-top: 1px solid var(--card-border); }
+        .field-count { font-size: 0.9rem; color: var(--primary); background: rgba(99, 102, 241, 0.1); padding: 0.2rem 0.8rem; border-radius: 20px; }
     </style>
 </head>
 <body>
@@ -107,7 +95,7 @@
         async function handleFileUpload(file) {
             const formData = new FormData();
             formData.append('file', file);
-            dropZone.innerHTML = '<div class="loader" style="display: block;"></div><p style="margin-top: 1rem;">กำลังวิเคราะห์โครงสร้างไฟล์...</p>';
+            dropZone.innerHTML = '<div class="loader" style="display: block;"></div><p style="margin-top: 1rem;">กำลังวิเคราะห์เอกสาร...</p>';
 
             try {
                 const response = await fetch('upload/', {
@@ -130,17 +118,20 @@
             document.getElementById('stat-badge').innerText = `พบ ${fields.length} ฟิลด์`;
             
             fields.forEach(field => {
-                addFieldToUI(field);
+                // field is now an object {id, label, p_index}
+                addFieldToUI(field.label, field.id);
             });
             
             uploadSection.style.display = 'none';
             formContainer.style.display = 'block';
         }
 
-        function addFieldToUI(label) {
+        function addFieldToUI(label, id) {
             const group = document.createElement('div');
             group.className = 'input-group fade-in';
-            group.innerHTML = `<label>${label}</label><input type="text" name="${label}" placeholder="ระบุข้อมูล...">`;
+            // Use the unique ID as the name to bind to a specific paragraph
+            const finalId = id || `manual_${Date.now()}_${label}`;
+            group.innerHTML = `<label>${label}</label><input type="text" name="${finalId}" placeholder="ระบุข้อมูล...">`;
             dynamicForm.appendChild(group);
         }
 
@@ -148,9 +139,8 @@
             const nameInput = document.getElementById('new-field-name');
             const name = nameInput.value.trim();
             if (name) {
-                addFieldToUI(name);
+                addFieldToUI(name, null);
                 nameInput.value = '';
-                // Update Badge
                 const count = dynamicForm.querySelectorAll('.input-group').length;
                 document.getElementById('stat-badge').innerText = `รวม ${count} ฟิลด์`;
             }

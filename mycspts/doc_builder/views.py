@@ -13,58 +13,66 @@ LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.exe"
 
 def extract_fields_from_docx(filepath):
     """
-    Highly robust field extraction. 
-    Handles:
-    - Normal dots (.), Ellipsis (…), Underlines (_)
-    - Labels on same line or line above
-    - Multiple dot groups on one line
+    Index-based extraction to separate duplicate labels and prevent cross-talk.
+    Returns a list of dictionaries containing label, unique ID, and paragraph index.
     """
     doc = Document(filepath)
     fields = []
-    seen = set()
-    
-    paragraphs = [p.text.strip() for p in doc.paragraphs]
-    
-    # Regex including Unicode ellipsis \u2026 and dots
-    # Looks for any sequence of 2 or more dot-like characters
     dot_pattern = r"[…\._]{2,}"
     
-    for i, text in enumerate(paragraphs):
+    label_counts = {}
+
+    for i, p in enumerate(doc.paragraphs):
+        text = p.text.strip()
+        label = None
+        
         if re.search(dot_pattern, text):
-            # Case 1: Text before dots on the same line
-            # Capture labels (supporting Thai, English, Numbers)
+            # Case 1: Label on same line
             match = re.search(r"([ก-๙a-zA-Z0-9\s(){}\[\]\-:]+?)\s*" + dot_pattern, text)
             if match:
                 label = match.group(1).strip().strip(':').strip()
-                if label and label not in seen and len(label) < 100:
-                    fields.append(label)
-                    seen.add(label)
-            # Case 2: Dots on a new line, check line above
+            # Case 2: Label on line above
             elif i > 0:
-                prev_text = paragraphs[i-1].strip().strip(':').strip()
+                prev_text = doc.paragraphs[i-1].text.strip().strip(':').strip()
                 if prev_text and not re.search(dot_pattern, prev_text) and len(prev_text) < 100:
-                    if prev_text not in seen:
-                        fields.append(prev_text)
-                        seen.add(prev_text)
+                    label = prev_text
+            
+            if label:
+                # Count occurrences to handle duplicates (e.g., student 1, 2, 3)
+                label_counts[label] = label_counts.get(label, 0) + 1
+                display_label = label if label_counts[label] == 1 else f"{label} ({label_counts[label]})"
+                
+                fields.append({
+                    'id': f"para_{i}_{label}", # Unique ID binding field to specific paragraph
+                    'label': display_label,
+                    'p_index': i
+                })
                         
     return fields
 
 def fill_docx(template_path, data, output_path):
     """
-    Fills document by replacing dot-like characters with values.
+    Fills document using unique IDs to target specific paragraphs.
+    Data key format: para_{index}_{label}
     """
     doc = Document(template_path)
     dot_pattern = r"[…\._]{2,}"
     
-    for i, p in enumerate(doc.paragraphs):
-        text = p.text
-        for label, value in data.items():
-            # Match if label is in this paragraph or previous
-            if label in text or (i > 0 and label in doc.paragraphs[i-1].text):
-                for run in p.runs:
-                    if re.search(dot_pattern, run.text):
-                        # Replace dots/ellipsis/underlines with the user's value
-                        run.text = re.sub(dot_pattern, value, run.text)
+    for field_id, value in data.items():
+        if field_id.startswith('para_'):
+            try:
+                # Extract paragraph index from ID
+                parts = field_id.split('_')
+                p_index = int(parts[1])
+                
+                if p_index < len(doc.paragraphs):
+                    p = doc.paragraphs[p_index]
+                    # Replace all dot patterns in this specific paragraph
+                    for run in p.runs:
+                        if re.search(dot_pattern, run.text):
+                            run.text = re.sub(dot_pattern, value, run.text)
+            except Exception as e:
+                print(f"Fill Error for {field_id}: {e}")
     
     doc.save(output_path)
 
@@ -89,7 +97,6 @@ def index(request):
 def upload_file(request):
     if request.method == 'POST' and request.FILES.get('file'):
         file = request.FILES['file']
-        # Create media root subdirs if not exist
         upload_dir = os.path.join(settings.MEDIA_ROOT, 'uploads')
         if not os.path.exists(upload_dir):
             os.makedirs(upload_dir)
